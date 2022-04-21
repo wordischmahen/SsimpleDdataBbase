@@ -19,11 +19,13 @@ typedef struct {
 	 META_COMMAND_UNRECOGNIZED_COMMAND
  } MetaCommandResult;
 
- typedef enum {
+ typedef enum PrepareResult_t {
 	 PREPARE_SUCCESS,
+	 PREPARE_NEGATIVE_ID,
+	 PREPARE_STRING_TOO_LONG,
 	 PREPARE_SYNTAX_ERROR,
 	 PREPARE_UNRECOGNIZED_STATEMENT
- } PrepareResult;
+ };
 
 
 typedef enum { STATEMENT_INSERT, STATEMENT_SELECT } StatementType;
@@ -34,8 +36,8 @@ typedef enum { STATEMENT_INSERT, STATEMENT_SELECT } StatementType;
 
 typedef struct {
 	uint32_t  id;
-	char username[COLUMN_USERNAME_SIZE];
-	char email[COLUMN_EMAIL_SIZE];
+	char username[COLUMN_USERNAME_SIZE+ 1]; //space for null
+	char email[COLUMN_EMAIL_SIZE +1];
 } Row;
 	typedef struct {
     StatementType type;
@@ -44,7 +46,7 @@ typedef struct {
 
 	//row
 #define size_of_attribute(Struct, Attribute) sizeof(((Struct*)0)->Attribute)
-
+	
 	const uint32_t ID_SIZE = size_of_attribute(Row, id);
 	const uint32_t USERNAME_SIZE = size_of_attribute(Row, username);
 	const uint32_t EMAIL_SIZE = size_of_attribute(Row, email);
@@ -112,41 +114,62 @@ typedef struct {
 		free(table);
 	}
 
-InputBuffer* new_input_buffer() {
-	InputBuffer* input_buffer = malloc(sizeof(InputBuffer));
-	input_buffer->buffer = NULL;
-	void close_input_buffer(InputBuffer * input_buffer) {
-		free(input_buffer);
-	}
-
-
-
-	MetaCommandResult do_meta_command(InputBuffer * input_buffer) {
-		if (strcmp(input_buffer->buffer, "exit") == 0) {
-			close_input_buffer(input_buffer);
-			exit(EXIT_SUCCESS);
+	InputBuffer* new_input_buffer() {
+		InputBuffer* input_buffer = malloc(sizeof(InputBuffer));
+		input_buffer->buffer = NULL;
+		void close_input_buffer(InputBuffer * input_buffer) {
+			free(input_buffer);
 		}
-		else {
-			return META_COMMAND_UNRECOGNIZED_COMMAND;
-		}
-	}
 
-	PrepareResult prepare_statement(InputBuffer * input_buffer,
-		Statement * statement) {
-		if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
+
+
+		MetaCommandResult do_meta_command(InputBuffer * input_buffer) {
+			if (strcmp(input_buffer->buffer, "exit") == 0) {
+				close_input_buffer(input_buffer);
+				exit(EXIT_SUCCESS);
+			}
+			else {
+				return META_COMMAND_UNRECOGNIZED_COMMAND;
+			}
+		}
+
+		PrepareResult prepare_insert(InputBuffer* input_buffer, Statement*
+			statement) {
 			statement->type = STATEMENT_INSERT;
-	//upgrade prepare_statement for parsing arg
-			int args_assigned = sscanf(
-				input_buffer->buffer, "insert %d %s %s",
-				&(statement->row_to_insert.id),
-				statement->row_to_insert.username,
-				statement->row_to_insert.email);
-			if (args_assigned < 3) {
+
+			char* keyword = strtok(input_buffer->buffer, " ");
+			char* id_string = strtok(NULL, " ");
+			char* username = strtok(NULL, " ");
+			char* email = strtok(NULL, " ");
+
+			if (id_string == NULL || username == NULL || email) {
 				return PREPARE_SYNTAX_ERROR;
 			}
+
+			int id = atoi(id_string);
+			if (id < 0) {
+				return PREPARE_NEGATIVE_ID;
+			}
+			if (strlen(username) > COLUMN_USERNAME_SIZE) {
+				return PREPARE_STRING_TOO_LONG;
+			}
+			if (strlen(email) > COLUMN_EMAIL_SIZE) {
+				return PREPARE_STRING_TOO_LONG;
+			}
+
+			statement->row_to_insert.id = id;
+			strcpy(statement->row_to_insert.username, username);
+			strcpy(statement->row_to_insert.email, email);
+
 			return PREPARE_SUCCESS;
 		}
-		if (strcmp(input_buffer->buffer), "select") == 0) {
+
+	PrepareResult prepare_statement(InputBuffer* input_buffer,
+		Statement* statement) {
+		if (strncmp(input_buffer->buffer, "insert", 6) == 0) {
+			return prepare_insert(input_buffer, statement);
+		}
+		if (strcmp(input_buffer->buffer, "select") == 0) {
 		statement->type = STATEMENT_SELECT;
 		return PREPARE_SUCCESS;
 		}
@@ -229,6 +252,12 @@ InputBuffer* new_input_buffer() {
 				switch (prepare_statement(input_buffer, &statement)) {
 				case (PREPARE_SUCCESS):
 					break;
+				case (PREPARE_NEGATIVE_ID):
+					printf("ID must be positive \n");
+					continue;
+				case (PREPARE_STRING_TOO_LONG):
+					printf("String is too long \n");
+					continue;
 				case (PREPARE_SYNTAX_ERROR):
 					printf("Syntax error. Couldn't parse statement \n");
 					continue;
